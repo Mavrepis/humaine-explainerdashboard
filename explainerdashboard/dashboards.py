@@ -532,6 +532,7 @@ class ExplainerDashboard:
         model_summary: bool = True,
         contributions: bool = True,
         whatif: bool = True,
+        weakspot: bool = True,
         shap_dependence: bool = True,
         shap_interaction: bool = True,
         decision_trees: bool = True,
@@ -620,6 +621,7 @@ class ExplainerDashboard:
             model_summary(bool, optional): include ModelSummaryTab, defaults to True.
             contributions(bool, optional): include ContributionsTab, defaults to True.
             whatif (bool, optional): include WhatIfTab, defaults to True.
+            weakspot (bool, optional): include WeakspotTab, defaults to True.
             shap_dependence(bool, optional): include ShapDependenceTab, defaults to True.
             shap_interaction(bool, optional): include InteractionsTab if model allows it, defaults to True.
             decision_trees(bool, optional): include DecisionTreesTab if model allows it, defaults to True.
@@ -770,6 +772,8 @@ class ExplainerDashboard:
                     tabs.append(IndividualPredictionsComposite)
                 if whatif:
                     tabs.append(WhatIfComposite)
+                if weakspot:
+                    tabs.append(WeakspotComponent)
                 if shap_dependence:
                     tabs.append(ShapDependenceComposite)
                 if shap_interaction:
@@ -1092,6 +1096,8 @@ class ExplainerDashboard:
                 return ShapInteractionsComposite
             elif component == "decision_trees":
                 return DecisionTreesComposite
+            elif component == "weakspot":
+                return WeakspotComponent
         return component
 
     @staticmethod
@@ -2809,6 +2815,13 @@ class InlineExplainerTabs(InlineExplainerComponent):
     def whatif(self, title="What if...", **kwargs):
         """Show What if... tab inline in notebook"""
         tab = WhatIfComposite(self._explainer, **kwargs)
+        self._run_component(tab, title)
+
+    @delegates_kwargs(WeakspotComponent)
+    @delegates_doc(WeakspotComponent)
+    def weakspot(self, title="What if...", **kwargs):
+        """Show Weakspot tab inline in notebook"""
+        tab = WeakspotComponent(self._explainer, **kwargs)
         self._run_component(tab, title)
 
     @delegates_kwargs(ShapDependenceComposite)

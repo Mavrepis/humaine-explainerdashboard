@@ -1,11 +1,11 @@
-![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/oegedijk/explainerdashboard/explainerdashboard.yml)
-![https://pypi.python.org/pypi/explainerdashboard/](https://img.shields.io/pypi/v/explainerdashboard.svg)
-![https://anaconda.org/conda-forge/explainerdashboard/](https://anaconda.org/conda-forge/explainerdashboard/badges/version.svg)
-[![codecov](https://codecov.io/gh/oegedijk/explainerdashboard/branch/master/graph/badge.svg?token=0XU6HNEGBK)](undefined)
-[![Downloads](https://static.pepy.tech/badge/explainerdashboard)](https://pepy.tech/project/explainerdashboard)
+![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/Mavrepis/humaine-explainerdashboard/explainerdashboard.yml)
+![https://pypi.python.org/pypi/humaine-explainerdashboard/](https://img.shields.io/pypi/v/humaine-explainerdashboard.svg)
+[![codecov](https://codecov.io/gh/Mavrepis/humaine-explainerdashboard/branch/master/graph/badge.svg)](undefined)
+[![Downloads](https://static.pepy.tech/badge/humaine-explainerdashboard)](https://pepy.tech/project/humaine-explainerdashboard)
 
-# explainerdashboard
-by: Oege Dijk
+# humaine-explainerdashboard
+**HumaInE Fork of explainerdashboard**
+by: Oege Dijk (original), forked for HumAIne project
 
 This package makes it convenient to quickly deploy a dashboard web app
 that explains the workings of a (scikit-learn compatible) machine 
@@ -35,11 +35,24 @@ programmatically as an artifact as part of an automated CI/CD deployment process
 
 You can install the package through pip:
 
+`pip install humaine-explainerdashboard`
+
+Or install directly from GitHub:
+
+`pip install git+https://github.com/Mavrepis/humaine-explainerdashboard.git`
+
+**Note:** This is a fork of the original explainerdashboard. For the original package, use:
 `pip install explainerdashboard`
 
-or conda-forge:
+## About This Fork
 
-`conda install -c conda-forge explainerdashboard`
+This is the HumaInE project fork of explainerdashboard, maintained separately for project-specific enhancements and modifications. 
+
+- **Original Project**: [https://github.com/oegedijk/explainerdashboard](https://github.com/oegedijk/explainerdashboard)
+- **Original Documentation**: [https://explainerdashboard.readthedocs.io/](https://explainerdashboard.readthedocs.io/)
+- **This Fork**: [https://github.com/Mavrepis/humaine-explainerdashboard](https://github.com/Mavrepis/humaine-explainerdashboard)
+
+**Note**: The documentation links in this README still point to the original project's documentation, which remains applicable for most functionality.
 
 ## Demonstration:
 
@@ -261,19 +274,19 @@ You can store explainers to disk with `explainer.dump("explainer.joblib")`
 and then run them from the command-line:
 
 ```bash
-$ explainerdashboard run explainer.joblib
+$ humaine-explainerdashboard run explainer.joblib
 ```
 
 Or store the full configuration of a dashboard to `.yaml` with e.g.
 `dashboard.to_yaml("dashboard.yaml", explainerfile="explainer.joblib", dump_explainer=True)` and run it with:
 
 ```bash
-$ explainerdashboard run dashboard.yaml
+$ humaine-explainerdashboard run dashboard.yaml
 ```
 
-You can also build explainers from the commandline with `explainerdashboard build`.
+You can also build explainers from the commandline with `humaine-explainerdashboard build`.
 See [explainerdashboard CLI documentation](https://explainerdashboard.readthedocs.io/en/latest/cli.html)
-for details. 
+for details (note: CLI commands use `humaine-explainerdashboard` instead of `explainerdashboard`). 
 
 ## Customizing your dashboard
 

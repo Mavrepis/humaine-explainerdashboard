@@ -6,3 +6,5 @@ from .shap_components import *
 from .decisiontree_components import *
 from .connectors import *
 from .composites import *
+from .weakspot_components import *
+from .plot_analysis_components import *

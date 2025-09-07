@@ -184,3 +184,14 @@ dashboard1_explainer.joblib
 db2_dashboard.yaml
 db2_explainer.dill
 db2_explainer.joblib
+
+.kiro
+.qoder
+
+.dockerignore
+Dockerfile
+explainerdashboard/datasets/
+
+~explainerdashboard/datasets/titanic_test.csv
+~explainerdashboard/datasets/titanic_train.csv
+

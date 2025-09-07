@@ -20,6 +20,11 @@ __all__ = [
     "plotly_preds_vs_col",
     "plotly_rf_trees",
     "plotly_xgboost_trees",
+    "plotly_weakspot_analysis",
+    "plotly_weakspot_heatmap",
+    "plotly_uncertainty_intervals",
+    "plotly_uncertainty_width",
+    "plotly_coverage_diagnostic",
 ]
 
 import warnings
@@ -3065,3 +3070,736 @@ def plotly_xgboost_trees(
     fig.update_layout(annotations=annotations)
     fig.update_layout(margin=dict(t=40, b=40, l=40, r=40))
     return fig
+
+
+def plotly_weakspot_analysis(
+    weakspot_data,
+    slice_feature,
+    metric,
+    threshold_value,
+    weak_regions,
+    title=None,
+    units="",
+    round=3
+):
+    """Generate interactive plotly figure for 1D weakspot analysis visualization.
+    
+    Args:
+        weakspot_data (pd.DataFrame): DataFrame with weakspot analysis results
+        slice_feature (str): Name of the feature being sliced
+        metric (str): Performance metric being analyzed
+        threshold_value (float): Threshold for identifying weak regions
+        weak_regions (List[Dict]): List of weak regions identified
+        title (str, optional): Custom title for the plot. Defaults to None.
+        units (str, optional): Units for the metric. Defaults to "".
+        round (int, optional): Number of decimal places for rounding. Defaults to 3.
+        
+    Returns:
+        plotly.graph_objects.Figure: Interactive weakspot analysis plot
+    """
+    if weakspot_data.empty:
+        # Return empty plot with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available for weakspot analysis",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False, font=dict(size=16)
+        )
+        fig.update_layout(
+            title="Weakspot Analysis - No Data",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False)
+        )
+        return fig
+    
+    # Extract data for plotting
+    x_centers = weakspot_data[f'{slice_feature}_center'].values
+    performances = weakspot_data['performance'].values
+    sample_counts = weakspot_data['sample_count'].values
+    is_weak = weakspot_data['is_weak'].values
+    descriptions = weakspot_data['description'].values
+    
+    # Get overall metric from DataFrame attributes
+    overall_metric = weakspot_data.attrs.get('overall_metric', np.nan)
+    
+    # Determine if lower is better for this metric
+    lower_is_better_metrics = {'mse', 'mae', 'mape', 'log_loss', 'brier_score'}
+    lower_is_better = metric.lower() in lower_is_better_metrics
+    
+    # Create hover text
+    hover_text = [
+        f"{desc}<br>"
+        f"{metric.upper()}: {perf:.{round}f} {units}<br>"
+        f"Samples: {count}<br>"
+        f"{'WEAK REGION' if weak else 'Normal'}"
+        for desc, perf, count, weak in zip(descriptions, performances, sample_counts, is_weak)
+    ]
+    
+    # Color coding: red for weak regions, blue for normal regions
+    colors = ['rgba(219, 64, 82, 0.8)' if weak else 'rgba(55, 128, 191, 0.8)' 
+              for weak in is_weak]
+    
+    # Create bar plot
+    fig = go.Figure()
+    
+    # Add bars for each slice
+    fig.add_trace(go.Bar(
+        x=x_centers,
+        y=performances,
+        text=hover_text,
+        hoverinfo='text',
+        marker=dict(
+            color=colors,
+            line=dict(color='rgba(0,0,0,0.3)', width=1)
+        ),
+        name='Performance by slice'
+    ))
+    
+    # Add horizontal line for overall performance
+    if not np.isnan(overall_metric):
+        fig.add_hline(
+            y=overall_metric,
+            line_dash="dash",
+            line_color="black",
+            line_width=2,
+            annotation_text=f"Overall {metric.upper()}: {overall_metric:.{round}f}",
+            annotation_position="top right"
+        )
+        
+        # Add threshold line
+        if lower_is_better:
+            threshold_line_value = overall_metric * threshold_value
+            threshold_text = f"Weakness threshold: {threshold_line_value:.{round}f}"
+        else:
+            threshold_line_value = overall_metric / threshold_value
+            threshold_text = f"Weakness threshold: {threshold_line_value:.{round}f}"
+        
+        fig.add_hline(
+            y=threshold_line_value,
+            line_dash="dot",
+            line_color="red",
+            line_width=2,
+            annotation_text=threshold_text,
+            annotation_position="bottom right"
+        )
+    
+    # Set title
+    if title is None:
+        title = f"Weakspot Analysis: {metric.upper()} by {slice_feature}"
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=16)),
+        xaxis_title=slice_feature,
+        yaxis_title=f"{metric.upper()} {f'({units})' if units else ''}",
+        plot_bgcolor='white',
+        showlegend=False,
+        margin=dict(t=60, b=40, l=60, r=40),
+        hovermode='closest'
+    )
+    
+    # Add grid
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
+    
+    return fig
+
+
+def plotly_weakspot_heatmap(
+    weakspot_data,
+    slice_features,
+    metric,
+    title=None,
+    units="",
+    round=3
+):
+    """Generate interactive heatmap for 2D weakspot analysis visualization.
+    
+    Args:
+        weakspot_data (pd.DataFrame): DataFrame with weakspot analysis results
+        slice_features (List[str]): Names of the two features being sliced
+        metric (str): Performance metric being analyzed
+        title (str, optional): Custom title for the plot. Defaults to None.
+        units (str, optional): Units for the metric. Defaults to "".
+        round (int, optional): Number of decimal places for rounding. Defaults to 3.
+        
+    Returns:
+        plotly.graph_objects.Figure: Interactive heatmap plot
+    """
+    if len(slice_features) != 2:
+        raise ValueError("Heatmap requires exactly 2 slice features")
+    
+    if weakspot_data.empty:
+        # Return empty plot with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available for weakspot heatmap",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False, font=dict(size=16)
+        )
+        fig.update_layout(
+            title="Weakspot Heatmap - No Data",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False)
+        )
+        return fig
+    
+    feature1, feature2 = slice_features
+    
+    # Extract center points for both features
+    x_centers = weakspot_data[f'{feature1}_center'].values
+    y_centers = weakspot_data[f'{feature2}_center'].values
+    performances = weakspot_data['performance'].values
+    sample_counts = weakspot_data['sample_count'].values
+    is_weak = weakspot_data['is_weak'].values
+    descriptions = weakspot_data['description'].values
+    
+    # Get unique x and y values to create grid
+    unique_x = sorted(set(x_centers))
+    unique_y = sorted(set(y_centers))
+    
+    # Create performance matrix
+    performance_matrix = np.full((len(unique_y), len(unique_x)), np.nan)
+    weak_matrix = np.full((len(unique_y), len(unique_x)), False)
+    hover_matrix = np.full((len(unique_y), len(unique_x)), "", dtype=object)
+    
+    # Fill matrices
+    for i, (x_center, y_center, perf, count, weak, desc) in enumerate(
+        zip(x_centers, y_centers, performances, sample_counts, is_weak, descriptions)
+    ):
+        x_idx = unique_x.index(x_center)
+        y_idx = unique_y.index(y_center)
+        performance_matrix[y_idx, x_idx] = perf
+        weak_matrix[y_idx, x_idx] = weak
+        hover_matrix[y_idx, x_idx] = (
+            f"{desc}<br>"
+            f"{metric.upper()}: {perf:.{round}f} {units}<br>"
+            f"Samples: {count}<br>"
+            f"{'WEAK REGION' if weak else 'Normal'}"
+        )
+    
+    # Determine colorscale based on metric type
+    lower_is_better_metrics = {'mse', 'mae', 'mape', 'log_loss', 'brier_score'}
+    lower_is_better = metric.lower() in lower_is_better_metrics
+    
+    if lower_is_better:
+        # For "lower is better" metrics, use colorscale where red = high (bad)
+        colorscale = [
+            [0, 'rgba(55, 128, 191, 0.8)'],    # Blue for good (low values)
+            [0.5, 'rgba(255, 255, 255, 0.8)'], # White for medium
+            [1, 'rgba(219, 64, 82, 0.8)']      # Red for bad (high values)
+        ]
+    else:
+        # For "higher is better" metrics, use colorscale where red = low (bad)
+        colorscale = [
+            [0, 'rgba(219, 64, 82, 0.8)'],     # Red for bad (low values)
+            [0.5, 'rgba(255, 255, 255, 0.8)'], # White for medium
+            [1, 'rgba(55, 128, 191, 0.8)']     # Blue for good (high values)
+        ]
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=performance_matrix,
+        x=unique_x,
+        y=unique_y,
+        text=hover_matrix,
+        hoverinfo='text',
+        colorscale=colorscale,
+        colorbar=dict(
+            title=f"{metric.upper()} {f'({units})' if units else ''}",
+            titleside="right"
+        ),
+        showscale=True
+    ))
+    
+    # Add markers for weak regions
+    weak_x = []
+    weak_y = []
+    weak_text = []
+    
+    for i, (x_center, y_center, weak) in enumerate(zip(x_centers, y_centers, is_weak)):
+        if weak:
+            weak_x.append(x_center)
+            weak_y.append(y_center)
+            weak_text.append("⚠")  # Warning symbol for weak regions
+    
+    if weak_x:
+        fig.add_trace(go.Scatter(
+            x=weak_x,
+            y=weak_y,
+            mode='markers+text',
+            text=weak_text,
+            textfont=dict(size=20, color='white'),
+            marker=dict(
+                size=15,
+                color='rgba(0,0,0,0)',  # Transparent markers
+                line=dict(color='white', width=2)
+            ),
+            hoverinfo='skip',
+            showlegend=False,
+            name='Weak Regions'
+        ))
+    
+    # Set title
+    if title is None:
+        title = f"Weakspot Heatmap: {metric.upper()} by {feature1} vs {feature2}"
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(text=title, x=0.5, font=dict(size=16)),
+        xaxis_title=feature1,
+        yaxis_title=feature2,
+        plot_bgcolor='white',
+        margin=dict(t=60, b=40, l=60, r=80),
+        hovermode='closest'
+    )
+    
+    # Ensure square aspect ratio for better visualization
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    
+    return fig
+
+
+def _format_weakspot_hover_text(
+    description,
+    performance,
+    sample_count,
+    metric,
+    is_weak,
+    round=3,
+    units=""
+):
+    """Helper function to format hover text for weakspot plots.
+    
+    Args:
+        description (str): Description of the slice
+        performance (float): Performance metric value
+        sample_count (int): Number of samples in slice
+        metric (str): Metric name
+        is_weak (bool): Whether this is a weak region
+        round (int): Number of decimal places
+        units (str): Units for the metric
+        
+    Returns:
+        str: Formatted hover text
+    """
+    status = "WEAK REGION" if is_weak else "Normal"
+    return (
+        f"{description}<br>"
+        f"{metric.upper()}: {performance:.{round}f} {units}<br>"
+        f"Samples: {sample_count}<br>"
+        f"{status}"
+    )
+
+
+def _get_weakspot_colors(is_weak_list, opacity=0.8):
+    """Helper function to get colors for weakspot visualization.
+    
+    Args:
+        is_weak_list (List[bool]): List indicating which regions are weak
+        opacity (float): Opacity for colors
+        
+    Returns:
+        List[str]: List of color strings
+    """
+    return [
+        f'rgba(219, 64, 82, {opacity})' if weak else f'rgba(55, 128, 191, {opacity})'
+        for weak in is_weak_list
+    ]
+
+
+def _add_weakspot_threshold_lines(
+    fig,
+    overall_metric,
+    threshold_value,
+    metric,
+    round=3,
+    units=""
+):
+    """Helper function to add threshold lines to weakspot plots.
+    
+    Args:
+        fig (plotly.graph_objects.Figure): Figure to add lines to
+        overall_metric (float): Overall model performance
+        threshold_value (float): Threshold multiplier
+        metric (str): Metric name
+        round (int): Number of decimal places
+        units (str): Units for the metric
+        
+    Returns:
+        plotly.graph_objects.Figure: Updated figure
+    """
+    if np.isnan(overall_metric):
+        return fig
+    
+    # Determine if lower is better for this metric
+    lower_is_better_metrics = {'mse', 'mae', 'mape', 'log_loss', 'brier_score'}
+    lower_is_better = metric.lower() in lower_is_better_metrics
+    
+    # Add overall performance line
+    fig.add_hline(
+        y=overall_metric,
+        line_dash="dash",
+        line_color="black",
+        line_width=2,
+        annotation_text=f"Overall {metric.upper()}: {overall_metric:.{round}f}",
+        annotation_position="top right"
+    )
+    
+    # Add threshold line
+    if lower_is_better:
+        threshold_line_value = overall_metric * threshold_value
+        threshold_text = f"Weakness threshold: {threshold_line_value:.{round}f}"
+    else:
+        threshold_line_value = overall_metric / threshold_value
+        threshold_text = f"Weakness threshold: {threshold_line_value:.{round}f}"
+    
+    fig.add_hline(
+        y=threshold_line_value,
+        line_dash="dot",
+        line_color="red",
+        line_width=2,
+        annotation_text=threshold_text,
+        annotation_position="bottom right"
+    )
+    
+    return fig
+
+
+def plotly_uncertainty_intervals(
+    y_true,
+    predictions,
+    prediction_intervals,
+    feature_values,
+    feature_name="Feature",
+    target="Target",
+    units="",
+    idxs=None,
+    coverage=0.9,
+    round=3,
+    index_name="Index",
+    plot_sample=None
+):
+    """
+    Generate an interactive plot with prediction intervals.
+    
+    Args:
+        y_true (np.ndarray): True target values
+        predictions (np.ndarray): Point predictions
+        prediction_intervals (np.ndarray): Prediction intervals of shape (n_samples, 2)
+        feature_values (np.ndarray): Feature values for x-axis
+        feature_name (str): Name of the feature for x-axis
+        target (str): Name of the target variable
+        units (str): Units for the target variable
+        idxs (np.ndarray): Index values for hover information
+        coverage (float): Coverage level for the intervals
+        round (int): Number of decimal places for rounding
+        index_name (str): Name for the index
+        plot_sample (int): Number of points to sample for plotting
+        
+    Returns:
+        plotly.graph_objects.Figure: Interactive plot with prediction intervals
+    """
+    
+    def safe_format_value(value, round_digits):
+        """Safely format a value for display, handling both numeric and categorical data."""
+        try:
+            # Try to format as float
+            return f"{float(value):.{round_digits}f}"
+        except (ValueError, TypeError):
+            # If it fails, return as string
+            return str(value)
+    
+    # Handle sampling
+    if plot_sample is not None and len(y_true) > plot_sample:
+        sample_idxs = np.random.choice(len(y_true), plot_sample, replace=False)
+        y_true = y_true[sample_idxs]
+        predictions = predictions[sample_idxs]
+        prediction_intervals = prediction_intervals[sample_idxs]
+        feature_values = feature_values[sample_idxs]
+        if idxs is not None:
+            idxs = idxs[sample_idxs]
+    
+    if idxs is None:
+        idxs = np.arange(len(y_true))
+    
+    # Sort by feature values for smooth curves
+    sort_idx = np.argsort(feature_values)
+    y_true_sorted = y_true[sort_idx]
+    predictions_sorted = predictions[sort_idx]
+    intervals_sorted = prediction_intervals[sort_idx]
+    feature_sorted = feature_values[sort_idx]
+    idxs_sorted = idxs[sort_idx]
+    
+    fig = go.Figure()
+    
+    # Add prediction intervals as a filled area
+    fig.add_trace(go.Scatter(
+        x=np.concatenate([feature_sorted, feature_sorted[::-1]]),
+        y=np.concatenate([intervals_sorted[:, 0], intervals_sorted[::-1, 1]]),
+        fill='toself',
+        fillcolor='rgba(255, 107, 107, 0.2)',
+        line=dict(color='rgba(255,255,255,0)'),
+        name=f'{int(coverage*100)}% Prediction Interval',
+        hoverinfo='skip'
+    ))
+    
+    # Add actual values as scatter points
+    fig.add_trace(go.Scatter(
+        x=feature_values,
+        y=y_true,
+        mode='markers',
+        marker=dict(
+            color='#4ECDC4',
+            size=6,
+            line=dict(color='black', width=1)
+        ),
+        name='Actual Values',
+        text=[f"{index_name}: {idx}<br>{target}: {y:.{round}f} {units}" 
+              for idx, y in zip(idxs, y_true)],
+        hovertemplate='%{text}<br>%{x}<extra></extra>'
+    ))
+    
+    # Add predictions as a line
+    fig.add_trace(go.Scatter(
+        x=feature_sorted,
+        y=predictions_sorted,
+        mode='lines',
+        line=dict(color='#FF6B6B', width=2),
+        name='Model Predictions',
+        text=[f"{index_name}: {idx}<br>Prediction: {pred:.{round}f} {units}" 
+              for idx, pred in zip(idxs_sorted, predictions_sorted)],
+        hovertemplate='%{text}<br>%{x}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=f'Prediction Intervals with {int(coverage*100)}% Coverage',
+        xaxis_title=feature_name,
+        yaxis_title=f'{target} {units}',
+        hovermode='closest',
+        template='plotly_white',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+    
+    return fig
+
+
+def plotly_uncertainty_width(
+    prediction_intervals,
+    feature_values,
+    feature_name="Feature",
+    coverage=0.9,
+    round=3,
+    plot_sample=None,
+    smooth=True
+):
+    """
+    Visualization of interval width variation.
+    
+    Args:
+        prediction_intervals (np.ndarray): Prediction intervals of shape (n_samples, 2)
+        feature_values (np.ndarray): Feature values for x-axis
+        feature_name (str): Name of the feature for x-axis
+        coverage (float): Coverage level for the intervals
+        round (int): Number of decimal places for rounding
+        plot_sample (int): Number of points to sample for plotting
+        smooth (bool): Whether to add a smoothed trend line
+        
+    Returns:
+        plotly.graph_objects.Figure: Line plot showing uncertainty magnitude
+    """
+    
+    def safe_format_value(value, round_digits):
+        """Safely format a value for display, handling both numeric and categorical data."""
+        try:
+            # Try to format as float
+            return f"{float(value):.{round_digits}f}"
+        except (ValueError, TypeError):
+            # If it fails, return as string
+            return str(value)
+    
+    # Calculate interval width
+    uncertainty_width = prediction_intervals[:, 1] - prediction_intervals[:, 0]
+    
+    # Handle sampling
+    if plot_sample is not None and len(uncertainty_width) > plot_sample:
+        sample_idxs = np.random.choice(len(uncertainty_width), plot_sample, replace=False)
+        uncertainty_width = uncertainty_width[sample_idxs]
+        feature_values = feature_values[sample_idxs]
+    
+    # Sort by feature values
+    sort_idx = np.argsort(feature_values)
+    width_sorted = uncertainty_width[sort_idx]
+    feature_sorted = feature_values[sort_idx]
+    
+    fig = go.Figure()
+    
+    # Add uncertainty width as scatter points
+    fig.add_trace(go.Scatter(
+        x=feature_values,
+        y=uncertainty_width,
+        mode='markers',
+        marker=dict(
+            color='#45B7D1',
+            size=4,
+            opacity=0.6
+        ),
+        name='Uncertainty Width',
+        text=[f"{feature_name}: {safe_format_value(f, round)}<br>Width: {w:.{round}f}" 
+              for f, w in zip(feature_values, uncertainty_width)],
+        hovertemplate='%{text}<extra></extra>'
+    ))
+    
+    # Add smoothed trend line if requested
+    if smooth and len(feature_sorted) > 10:
+        try:
+            from scipy.ndimage import gaussian_filter1d
+            width_smoothed = gaussian_filter1d(width_sorted, sigma=3.0)
+            
+            fig.add_trace(go.Scatter(
+                x=feature_sorted,
+                y=width_smoothed,
+                mode='lines',
+                line=dict(color='#FF6B6B', width=2),
+                name='Smoothed Trend',
+                hoverinfo='skip'
+            ))
+        except ImportError:
+            # Fallback to simple moving average if scipy not available
+            window = min(20, len(width_sorted) // 5)
+            if window > 1:
+                width_ma = np.convolve(width_sorted, np.ones(window)/window, mode='same')
+                fig.add_trace(go.Scatter(
+                    x=feature_sorted,
+                    y=width_ma,
+                    mode='lines',
+                    line=dict(color='#FF6B6B', width=2),
+                    name='Moving Average',
+                    hoverinfo='skip'
+                ))
+    
+    fig.update_layout(
+        title=f'Uncertainty Width for {int(coverage*100)}% Coverage',
+        xaxis_title=feature_name,
+        yaxis_title='Interval Width',
+        hovermode='closest',
+        template='plotly_white',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+    
+    return fig
+
+
+def plotly_coverage_diagnostic(
+    y_true,
+    prediction_intervals,
+    coverage_levels=None,
+    round=3
+):
+    """
+    Coverage validation plot showing empirical vs nominal coverage rates.
+    
+    Args:
+        y_true (np.ndarray): True target values
+        prediction_intervals (dict): Dictionary mapping coverage levels to interval arrays
+        coverage_levels (list): List of coverage levels to analyze
+        round (int): Number of decimal places for rounding
+        
+    Returns:
+        plotly.graph_objects.Figure: Empirical vs nominal coverage plot
+    """
+    
+    if coverage_levels is None:
+        coverage_levels = [0.8, 0.85, 0.9, 0.95, 0.99]
+    
+    if isinstance(prediction_intervals, np.ndarray):
+        # Single interval array provided, assume 90% coverage
+        empirical_coverage = []
+        nominal_coverage = []
+        
+        # Calculate empirical coverage
+        in_interval = ((y_true >= prediction_intervals[:, 0]) & 
+                      (y_true <= prediction_intervals[:, 1]))
+        emp_cov = np.mean(in_interval)
+        
+        empirical_coverage = [emp_cov]
+        nominal_coverage = [0.9]  # Assume 90% coverage
+    else:
+        # Multiple coverage levels provided
+        empirical_coverage = []
+        nominal_coverage = []
+        
+        for level in coverage_levels:
+            if level in prediction_intervals:
+                intervals = prediction_intervals[level]
+                in_interval = ((y_true >= intervals[:, 0]) & 
+                              (y_true <= intervals[:, 1]))
+                emp_cov = np.mean(in_interval)
+                empirical_coverage.append(emp_cov)
+                nominal_coverage.append(level)
+    
+    fig = go.Figure()
+    
+    # Add perfect calibration line (diagonal)
+    min_cov = min(min(nominal_coverage), min(empirical_coverage))
+    max_cov = max(max(nominal_coverage), max(empirical_coverage))
+    
+    fig.add_trace(go.Scatter(
+        x=[min_cov, max_cov],
+        y=[min_cov, max_cov],
+        mode='lines',
+        line=dict(color='gray', dash='dash', width=1),
+        name='Perfect Calibration',
+        hoverinfo='skip'
+    ))
+    
+    # Add empirical vs nominal coverage
+    fig.add_trace(go.Scatter(
+        x=nominal_coverage,
+        y=empirical_coverage,
+        mode='markers+lines',
+        marker=dict(
+            color='#FF6B6B',
+            size=8,
+            line=dict(color='darkred', width=1)
+        ),
+        line=dict(color='#FF6B6B', width=2),
+        name='Empirical Coverage',
+        text=[f"Nominal: {nom:.{round}f}<br>Empirical: {emp:.{round}f}<br>Bias: {emp-nom:.{round}f}" 
+              for nom, emp in zip(nominal_coverage, empirical_coverage)],
+        hovertemplate='%{text}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title='Coverage Calibration Diagnostic',
+        xaxis_title='Nominal Coverage',
+        yaxis_title='Empirical Coverage',
+        hovermode='closest',
+        template='plotly_white',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+    
+    # Ensure square aspect ratio
+    fig.update_xaxes(range=[min_cov - 0.01, max_cov + 0.01])
+    fig.update_yaxes(range=[min_cov - 0.01, max_cov + 0.01])
+    
+    return fig
+
+

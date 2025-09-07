@@ -2,6 +2,7 @@ __all__ = [
     "BaseExplainer",
     "ClassifierExplainer",
     "RegressionExplainer",
+    "WeakspotAnalyzer"
     "RandomForestClassifierExplainer",
     "RandomForestRegressionExplainer",
     "XGBClassifierExplainer",
@@ -2351,6 +2352,208 @@ class BaseExplainer(ABC):
                 units=units,
             )
 
+    def calculate_weakspot_analysis(
+        self,
+        slice_features: List[str],
+        slice_method: str = "histogram",
+        bins: int = 10,
+        metric: str = None,
+        threshold: float = 1.1,
+        min_samples: int = 20,
+        use_test: bool = False
+    ) -> Dict:
+        """
+        Calculate weakspot analysis for specified features.
+        
+        Identifies data slices where model performance is significantly worse
+        than overall performance.
+        
+        Args:
+            slice_features: List of 1-2 feature names to slice on
+            slice_method: 'histogram' or 'tree' slicing method
+            bins: Number of bins for histogram method
+            metric: Performance metric (auto-detected if None)
+            threshold: Multiplier for identifying weak regions
+            min_samples: Minimum samples required per slice
+            use_test: Whether to use test data (if available)
+            
+        Returns:
+            Dictionary containing weakspot analysis results
+        """
+        from .weakspot_analyzer import WeakspotAnalyzer
+        
+        # Determine which data to use
+        if use_test and hasattr(self, 'X_test') and hasattr(self, 'y_test'):
+            X_data = self.X_test
+            y_data = self.y_test
+            y_pred = self.preds_test
+        else:
+            X_data = self.X
+            y_data = self.y
+            y_pred = self.preds
+        
+        # Initialize analyzer
+        analyzer = WeakspotAnalyzer(is_classifier=self.is_classifier)
+        
+        # Perform analysis
+        result = analyzer.analyze_weakspots(
+            X=X_data,
+            y=y_data,
+            y_pred=y_pred,
+            slice_features=slice_features,
+            slice_method=slice_method,
+            bins=bins,
+            metric=metric,
+            threshold=threshold,
+            min_samples=min_samples
+        )
+        
+        return result.__dict__
+    
+    def get_weakspot_data(
+        self,
+        slice_features: List[str],
+        slice_method: str = "histogram",
+        bins: int = 10,
+        metric: str = None,
+        threshold: float = 1.1,
+        min_samples: int = 20,
+        use_test: bool = False
+    ) -> pd.DataFrame:
+        """
+        Get formatted data for weakspot visualization.
+        
+        Args:
+            slice_features: List of 1-2 feature names to slice on
+            slice_method: 'histogram' or 'tree' slicing method
+            bins: Number of bins for histogram method
+            metric: Performance metric (auto-detected if None)
+            threshold: Multiplier for identifying weak regions
+            min_samples: Minimum samples required per slice
+            use_test: Whether to use test data (if available)
+            
+        Returns:
+            DataFrame with weakspot analysis data formatted for plotting
+        """
+        result = self.calculate_weakspot_analysis(
+            slice_features=slice_features,
+            slice_method=slice_method,
+            bins=bins,
+            metric=metric,
+            threshold=threshold,
+            min_samples=min_samples,
+            use_test=use_test
+        )
+        
+        # Convert bin results to DataFrame
+        bin_data = []
+        for bin_result in result['bin_results']:
+            row = {
+                'description': bin_result['description'],
+                'performance': bin_result['performance'],
+                'sample_count': bin_result['sample_count'],
+                'is_weak': bin_result['is_weak']
+            }
+            
+            # Add feature range information
+            for feature, (min_val, max_val) in bin_result['range'].items():
+                row[f'{feature}_min'] = min_val
+                row[f'{feature}_max'] = max_val
+                row[f'{feature}_center'] = (min_val + max_val) / 2
+            
+            bin_data.append(row)
+        
+        df = pd.DataFrame(bin_data)
+        
+        # Add metadata as attributes
+        df.attrs['metric'] = result['metric']
+        df.attrs['overall_metric'] = result['overall_metric']
+        df.attrs['threshold_value'] = result['threshold_value']
+        df.attrs['slice_features'] = result['slice_features']
+        df.attrs['slice_method'] = result['slice_method']
+        
+        return df
+    
+    def weakspot_summary(
+        self,
+        slice_features: List[str],
+        slice_method: str = "histogram",
+        bins: int = 10,
+        metric: str = None,
+        threshold: float = 1.1,
+        min_samples: int = 20,
+        use_test: bool = False
+    ) -> str:
+        """
+        Generate text summary of weakspot analysis.
+        
+        Args:
+            slice_features: List of 1-2 feature names to slice on
+            slice_method: 'histogram' or 'tree' slicing method
+            bins: Number of bins for histogram method
+            metric: Performance metric (auto-detected if None)
+            threshold: Multiplier for identifying weak regions
+            min_samples: Minimum samples required per slice
+            use_test: Whether to use test data (if available)
+            
+        Returns:
+            String summary of weakspot analysis results
+        """
+        result = self.calculate_weakspot_analysis(
+            slice_features=slice_features,
+            slice_method=slice_method,
+            bins=bins,
+            metric=metric,
+            threshold=threshold,
+            min_samples=min_samples,
+            use_test=use_test
+        )
+        
+        summary_stats = result['summary_stats']
+        weak_regions = result['weak_regions']
+        
+        # Build summary text
+        summary_lines = [
+            f"Weakspot Analysis Summary",
+            f"========================",
+            f"Features analyzed: {', '.join(slice_features)}",
+            f"Slicing method: {slice_method}",
+            f"Performance metric: {result['metric']}",
+            f"Overall performance: {result['overall_metric']:.4f}",
+            f"Weakness threshold: {result['threshold_value']}x",
+            f"",
+            f"Results:",
+            f"- Total slices: {summary_stats['total_slices']}",
+            f"- Weak slices: {summary_stats['weak_slices']}",
+            f"- Weak percentage: {summary_stats['weak_percentage']:.1f}%",
+            f"- Performance range: {summary_stats['performance_range']:.4f}",
+        ]
+        
+        if weak_regions:
+            summary_lines.extend([
+                f"",
+                f"Weak Regions Found:",
+                f"==================="
+            ])
+            
+            for i, region in enumerate(weak_regions[:5], 1):  # Show top 5
+                summary_lines.append(
+                    f"{i}. {region['description']} - "
+                    f"Performance: {region['performance']:.4f} "
+                    f"(Severity: {region['severity']:.2f}x, "
+                    f"Samples: {region['sample_count']})"
+                )
+            
+            if len(weak_regions) > 5:
+                summary_lines.append(f"... and {len(weak_regions) - 5} more")
+        else:
+            summary_lines.extend([
+                f"",
+                f"No weak regions detected with current threshold."
+            ])
+        
+        return "\n".join(summary_lines)
+
 
 class ClassifierExplainer(BaseExplainer):
     """ """
@@ -4099,6 +4302,11 @@ class RegressionExplainer(BaseExplainer):
             self.__class__ = XGBRegressionExplainer
 
         _ = self.shap_explainer
+        
+        # Initialize CQR attributes
+        self._prediction_intervals = None
+        self._cqr_predictor = None
+        self._cqr_coverage = 0.9
 
     @property
     def residuals(self):
@@ -4115,6 +4323,74 @@ class RegressionExplainer(BaseExplainer):
             print("Calculating absolute residuals...")
             self._abs_residuals = np.abs(self.residuals).astype(self.precision)
         return self._abs_residuals
+
+    @property
+    def prediction_intervals(self):
+        """Prediction intervals with conformalized coverage"""
+        if self._prediction_intervals is None:
+            self.calculate_prediction_intervals()
+        return self._prediction_intervals
+
+    @property
+    def uncertainty_width(self):
+        """Width of prediction intervals"""
+        intervals = self.prediction_intervals
+        return intervals[:, 1] - intervals[:, 0]
+
+    def calculate_prediction_intervals(self, miscoverage_rate=0.1, test_size=0.3, model_kwargs=None):
+        """Calculate conformalized prediction intervals
+        
+        Args:
+            miscoverage_rate (float): Desired miscoverage rate (alpha). Defaults to 0.1.
+            test_size (float): Proportion of data for calibration. Defaults to 0.3.
+            model_kwargs (dict): Parameters for QuantileRegressor. Defaults to None.
+            
+        Returns:
+            np.ndarray: Prediction intervals with shape (n_samples, 2)
+        """
+        from sklearn.linear_model import QuantileRegressor
+        from .explainer_methods import conformalized_quantile_regression
+        
+        if self.y_missing:
+            raise ValueError("Cannot calculate prediction intervals without target values (y)!")
+            
+        print(f"Calculating prediction intervals with {100*(1-miscoverage_rate):.0f}% coverage...")
+        
+        # Use conformalized quantile regression
+        self._cqr_predictor = conformalized_quantile_regression(
+            QuantileRegressor,
+            self.X,
+            self.y,
+            miscoverage_rate=miscoverage_rate,
+            test_size=test_size,
+            model_kwargs=model_kwargs
+        )
+        
+        # Calculate intervals for the explainer's data
+        self._prediction_intervals = self._cqr_predictor(self.X)
+        self._cqr_coverage = 1 - miscoverage_rate
+        
+        return self._prediction_intervals
+
+    def uncertainty_intervals_df(self, X=None, miscoverage_rate=None):
+        """DataFrame with prediction intervals for given X
+        
+        Args:
+            X (Union[np.ndarray, pd.DataFrame], optional): Feature matrix. 
+                If None, uses explainer.X.
+            miscoverage_rate (float, optional): Desired miscoverage rate for intervals.
+                If None, uses the coverage from last calculation.
+                
+        Returns:
+            pd.DataFrame: DataFrame with predictions, intervals, and uncertainty width.
+        """
+        from .explainer_methods import get_uncertainty_intervals_df
+        
+        if miscoverage_rate is not None and miscoverage_rate != (1 - self._cqr_coverage):
+            # Recalculate with new coverage level
+            self.calculate_prediction_intervals(miscoverage_rate=miscoverage_rate)
+            
+        return get_uncertainty_intervals_df(self, X, miscoverage_rate or (1 - self._cqr_coverage))
 
     def random_index(
         self,

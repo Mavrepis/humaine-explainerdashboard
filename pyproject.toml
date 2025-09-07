@@ -3,13 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "explainerdashboard"
+name = "humaine-explainerdashboard"
 dynamic = ["version"] # Version will be sourced from explainerdashboard/__init__.py
-description = "Quickly build Explainable AI dashboards that show the inner workings of so-called \"blackbox\" machine learning models."
+description = "HumAIne fork of explainerdashboard - Quickly build Explainable AI dashboards that show the inner workings of so-called 'blackbox' machine learning models."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE.txt" }
 authors = [
+    { name = "Philip Mavrepis", email = "pmav@unipi.gr"},
     { name = "Oege Dijk", email = "oegedijk@gmail.com" },
 ]
 keywords = [
@@ -56,15 +57,15 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/oegedijk/explainerdashboard"
+"Homepage" = "https://github.com/Mavrepis/humaine-explainerdashboard"
 "Documentation" = "https://explainerdashboard.readthedocs.io/"
-"Source Code" = "https://github.com/oegedijk/explainerdashboard/"
-"Bug Tracker" = "https://github.com/oegedijk/explainerdashboard/issues"
-"Funding" = "https://github.com/sponsors/oegedijk"
+"Source Code" = "https://github.com/Mavrepis/humaine-explainerdashboard/"
+"Bug Tracker" = "https://github.com/Mavrepis/humaine-explainerdashboard/issues"
+"Original Project" = "https://github.com/oegedijk/explainerdashboard"
 
 [project.scripts]
-explainerdashboard = "explainerdashboard.cli:explainerdashboard_cli"
-explainerhub = "explainerdashboard.cli:explainerhub_cli"
+humaine-explainerdashboard = "explainerdashboard.cli:explainerdashboard_cli"
+humaine-explainerhub = "explainerdashboard.cli:explainerhub_cli"
 
 [project.optional-dependencies]
 test = [
@@ -74,6 +75,7 @@ test = [
     "xgboost",
     "torch",
     "skorch",
+    "kaleido==0.2.1",
     "selenium",
     "pytest-console-scripts",
     "dill",

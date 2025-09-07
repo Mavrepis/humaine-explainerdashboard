@@ -333,6 +333,31 @@ RegressionModelSummaryComponent
 
 
 
+weakspot_components
+==================
+
+WeakspotComponent
+-----------------
+
+.. image:: screenshots/components/weakspot_analysis.png
+
+The WeakspotComponent provides interactive weakspot analysis to identify data slices 
+where your machine learning model performs significantly worse than its overall performance.
+This is useful for understanding model limitations, identifying potential bias, and 
+focusing improvement efforts.
+
+Key features:
+
+- **Feature Selection**: Analyze 1 or 2 features at a time
+- **Multiple Slicing Methods**: Histogram (equal-width bins) or Decision Tree (optimal splits)
+- **Performance Metrics**: Classification (Accuracy, Log Loss, Brier Score) or Regression (MSE, MAE, MAPE)
+- **Interactive Visualizations**: 1D plots for single features, 2D heatmaps for feature pairs
+- **Configurable Parameters**: Weakness threshold, number of bins, minimum samples per slice
+
+.. autoclass:: explainerdashboard.dashboard_components.weakspot_components.WeakspotComponent
+   :members:
+
+
 decisiontree_components
 =======================
 

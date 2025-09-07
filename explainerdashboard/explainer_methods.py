@@ -32,12 +32,15 @@ __all__ = [
     "get_xgboost_path_df",
     "get_xgboost_path_summary_df",
     "get_xgboost_preds_df",
+    "empirical_quantile",
+    "conformalized_quantile_regression",
+    "get_uncertainty_intervals_df",
 ]
 
 from functools import partial
 import re
 from collections import Counter
-from typing import List, Union
+from typing import List, Union, Dict, Any, Callable
 import warnings
 
 import numpy as np
@@ -48,7 +51,7 @@ from pandas.api.types import is_numeric_dtype
 from sklearn.metrics import make_scorer
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 
 from joblib import Parallel, delayed
 
@@ -1794,3 +1797,169 @@ def get_xgboost_preds_df(xgbmodel, X_row, pos_label=1):
             0, "pred_proba"
         ]
     return xgboost_preds_df
+
+
+def empirical_quantile(residuals: np.ndarray, miscoverage_rate: float, n_calib: int) -> float:
+    """
+    Compute the empirical quantile of the residuals for conformal prediction.
+
+    This function adjusts the target quantile to ensure that the empirical coverage
+    of the prediction intervals meets or exceeds the desired nominal level.
+
+    Args:
+        residuals (np.ndarray): The conformity scores from the calibration set.
+        miscoverage_rate (float): The desired miscoverage rate (alpha), e.g., 0.1 for 90% confidence.
+        n_calib (int): The number of observations in the calibration set.
+
+    Returns:
+        float: The empirical quantile of the residuals (conformity scores).
+    """
+    # For conformal prediction, the quantile is adjusted to ensure conservative coverage.
+    adjusted_quantile_level = (1 - miscoverage_rate) * (1 + 1 / n_calib)
+
+    # The ceiling of the index is used, which is the standard conservative approach
+    # in conformal prediction, rather than linear interpolation. This guarantees
+    # that the empirical coverage is at least (1 - alpha).
+    quantile_index = int(np.ceil(adjusted_quantile_level * len(residuals)))
+
+    # Ensure the index is within the bounds of the sorted residuals array.
+    quantile_index = min(quantile_index, len(residuals) - 1)
+
+    # Sort the residuals to find the value at the calculated index.
+    sorted_residuals = np.sort(residuals)
+    q_hat = sorted_residuals[quantile_index]
+
+    return q_hat
+
+
+def conformalized_quantile_regression(
+    model_class: type,
+    X: Union[np.ndarray, pd.DataFrame],
+    y: Union[np.ndarray, pd.Series],
+    miscoverage_rate: float = 0.1,
+    test_size: float = 0.3,
+    model_kwargs: Dict[str, Any] = None
+) -> Callable[[Union[np.ndarray, pd.DataFrame]], np.ndarray]:
+    """
+    Implement the Split Conformalized Quantile Regression (CQR) method.
+
+    This method provides prediction intervals with a guaranteed marginal coverage level.
+    Note: This implementation uses a two-sided conformity score, which allows for
+    asymmetric prediction intervals by correcting the lower and upper bounds independently.
+    This is a valid variant of the standard CQR which uses a single conformity score.
+
+    Args:
+        model_class: A quantile regression model class (e.g., QuantileRegressor).
+        X (Union[np.ndarray, pd.DataFrame]): The feature matrix.
+        y (Union[np.ndarray, pd.Series]): The target vector.
+        miscoverage_rate (float): The desired miscoverage rate (alpha), defaults to 0.1.
+        test_size (float): Proportion of data to use as the calibration set.
+        model_kwargs (Dict[str, Any], optional): Hyperparameters for the model class constructor.
+
+    Returns:
+        Callable: A function to predict intervals for new samples.
+    """
+    if model_kwargs is None:
+        model_kwargs = {'alpha': 0, 'solver': 'highs'}  # Default model parameters
+
+    # Split the data into training and calibration sets
+    X_train, X_calib, y_train, y_calib = train_test_split(
+        X, y, test_size=test_size, random_state=42
+    )
+
+    # Define the lower and upper quantiles based on the miscoverage rate
+    q_low, q_high = miscoverage_rate, 1 - miscoverage_rate
+
+    # Instantiate and train two separate quantile regression models
+    model_low = model_class(quantile=q_low, **model_kwargs)
+    model_high = model_class(quantile=q_high, **model_kwargs)
+
+    model_low.fit(X_train, y_train)
+    model_high.fit(X_train, y_train)
+
+    # Predict on the calibration set to get conformity scores
+    y_calib_pred_low = model_low.predict(X_calib)
+    y_calib_pred_high = model_high.predict(X_calib)
+
+    # Calculate two separate sets of residuals for asymmetric correction
+    residuals_low = y_calib - y_calib_pred_low
+    residuals_high = y_calib_pred_high - y_calib
+
+    # Compute the empirical quantile for each set of residuals
+    q_hat_low = empirical_quantile(residuals_low, miscoverage_rate, len(y_calib))
+    q_hat_high = empirical_quantile(residuals_high, miscoverage_rate, len(y_calib))
+
+    def predict_intervals(X_new: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """
+        Predict intervals for new samples using the calibrated model.
+
+        Args:
+            X_new (Union[np.ndarray, pd.DataFrame]): The new feature matrix.
+
+        Returns:
+            np.ndarray: An array of shape (n_samples, 2) with prediction intervals.
+        """
+        y_pred_low = model_low.predict(X_new)
+        y_pred_high = model_high.predict(X_new)
+
+        # Apply the calibrated conformity scores to adjust the prediction intervals
+        intervals = np.array([
+            y_pred_low - q_hat_low,
+            y_pred_high + q_hat_high
+        ]).T
+
+        return intervals
+
+    return predict_intervals
+
+
+def get_uncertainty_intervals_df(
+    explainer,
+    X: Union[np.ndarray, pd.DataFrame] = None,
+    miscoverage_rate: float = 0.1
+) -> pd.DataFrame:
+    """
+    Generate DataFrame with prediction intervals for given X.
+
+    Args:
+        explainer: RegressionExplainer instance with CQR capabilities
+        X (Union[np.ndarray, pd.DataFrame], optional): Feature matrix. 
+            If None, uses explainer.X.
+        miscoverage_rate (float): Desired miscoverage rate for intervals.
+
+    Returns:
+        pd.DataFrame: DataFrame with columns for predictions, intervals, and uncertainty width.
+    """
+    if X is None:
+        X = explainer.X
+    
+    # Calculate prediction intervals using the explainer's CQR predictor
+    if hasattr(explainer, '_cqr_predictor') and explainer._cqr_predictor is not None:
+        intervals = explainer._cqr_predictor(X)
+    else:
+        # Fallback: calculate intervals on-demand
+        intervals = explainer.calculate_prediction_intervals(
+            miscoverage_rate=miscoverage_rate
+        )
+    
+    # Get point predictions
+    if hasattr(explainer, 'predict'):
+        predictions = explainer.predict(X)
+    else:
+        predictions = explainer.model.predict(X)
+    
+    # Create DataFrame with results
+    df = pd.DataFrame({
+        'prediction': predictions,
+        'lower_bound': intervals[:, 0],
+        'upper_bound': intervals[:, 1],
+        'uncertainty_width': intervals[:, 1] - intervals[:, 0],
+        'coverage_level': 1 - miscoverage_rate
+    })
+    
+    # Add feature columns if X is a DataFrame
+    if isinstance(X, pd.DataFrame):
+        for col in X.columns:
+            df[col] = X[col].values
+    
+    return df

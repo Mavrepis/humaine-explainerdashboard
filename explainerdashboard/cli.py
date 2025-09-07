@@ -1,5 +1,5 @@
 """
-Command-line tool for starting an explainerdashboard from a particular directory
+Command-line tool for starting a humaine-explainerdashboard from a particular directory
 """
 
 import os
@@ -50,10 +50,10 @@ def build_explainer(explainer_config):
     )
     config = explainer_config["explainer"]
 
-    print(f"explainerdashboard ===> Loading model from {config['modelfile']}")
+    print(f"humaine-explainerdashboard ===> Loading model from {config['modelfile']}")
     model = pickle.load(open(config["modelfile"], "rb"))
 
-    print(f"explainerdashboard ===> Loading data from {config['datafile']}")
+    print(f"humaine-explainerdashboard ===> Loading data from {config['datafile']}")
     if str(config["datafile"]).endswith(".csv"):
         df = pd.read_csv(config["datafile"])
     elif str(config["datafile"]).endswith(".parquet"):
@@ -62,7 +62,7 @@ def build_explainer(explainer_config):
         raise ValueError("datafile should either be a .csv or .parquet!")
 
     print(
-        f"explainerdashboard ===> Using column {config['data_target']} to generate X, y "
+        f"humaine-explainerdashboard ===> Using column {config['data_target']} to generate X, y "
     )
     target_col = config["data_target"]
     X = df.drop(target_col, axis=1)
@@ -70,7 +70,7 @@ def build_explainer(explainer_config):
 
     if config["data_index"] is not None:
         print(
-            f"explainerdashboard ===> Generating index from column {config['data_index']}"
+            f"humaine-explainerdashboard ===> Generating index from column {config['data_index']}"
         )
         assert config["data_index"] in X.columns, (
             f"Cannot find data_index column ({config['data_index']})"
@@ -82,10 +82,10 @@ def build_explainer(explainer_config):
     params = config["params"]
 
     if config["explainer_type"] == "classifier":
-        print("explainerdashboard ===> Generating ClassifierExplainer...")
+        print("humaine-explainerdashboard ===> Generating ClassifierExplainer...")
         explainer = ClassifierExplainer(model, X, y, **params)
     elif config["explainer_type"] == "regression":
-        print("explainerdashboard ===> Generating RegressionExplainer...")
+        print("humaine-explainerdashboard ===> Generating RegressionExplainer...")
         explainer = ClassifierExplainer(model, X, y, **params)
     return explainer
 
@@ -94,24 +94,24 @@ def build_and_dump_explainer(explainer_config, dashboard_config=None):
     explainer = build_explainer(explainer_config)
 
     click.echo(
-        "explainerdashboard ===> Calculating properties by building Dashboard..."
+        "humaine-explainerdashboard ===> Calculating properties by building Dashboard..."
     )
     if dashboard_config is not None:
         ExplainerDashboard.from_config(explainer, dashboard_config)
     elif Path(explainer_config["explainer"]["dashboard_yaml"]).exists():
         click.echo(
-            f"explainerdashboard ===> Calculating properties by building Dashboard from {explainer_config['explainer']['dashboard_yaml']}..."
+            f"humaine-explainerdashboard ===> Calculating properties by building Dashboard from {explainer_config['explainer']['dashboard_yaml']}..."
         )
         dashboard_config = yaml.safe_load(
             open(str(explainer_config["explainer"]["dashboard_yaml"]), "r")
         )
         ExplainerDashboard.from_config(explainer, dashboard_config)
     else:
-        click.echo("explainerdashboard ===> Calculating all properties")
+        click.echo("humaine-explainerdashboard ===> Calculating all properties")
         explainer.calculate_properties()
 
     click.echo(
-        f"explainerdashboard ===> Saving explainer to {explainer_config['explainer']['explainerfile']}..."
+        f"humaine-explainerdashboard ===> Saving explainer to {explainer_config['explainer']['explainerfile']}..."
     )
     if (
         dashboard_config is not None
@@ -119,7 +119,7 @@ def build_and_dump_explainer(explainer_config, dashboard_config=None):
         != dashboard_config["dashboard"]["explainerfile"]
     ):
         click.echo(
-            "explainerdashboard ===> Warning explainerfile in explainer config and dashboard config do not match!"
+            "humaine-explainerdashboard ===> Warning explainerfile in explainer config and dashboard config do not match!"
         )
     explainer.dump(explainer_config["explainer"]["explainerfile"])
     return
@@ -130,7 +130,7 @@ def launch_dashboard_from_pkl(explainer_filepath, no_browser, port, no_dashboard
 
     if port is None:
         click.echo(
-            "explainerdashboard ===> Setting port to 8050, override with e.g. --port 8051"
+            "humaine-explainerdashboard ===> Setting port to 8050, override with e.g. --port 8051"
         )
         port = 8050
 
@@ -158,15 +158,15 @@ def launch_dashboard_from_yaml(dashboard_config, no_browser, port, no_dashboard=
 
     if not Path(config["dashboard"]["explainerfile"]).exists():
         click.echo(
-            f"explainerdashboard ===> {config['dashboard']['explainerfile']} does not exist!"
+            f"humaine-explainerdashboard ===> {config['dashboard']['explainerfile']} does not exist!"
         )
         click.echo(
-            f"explainerdashboard ===> first generate {config['dashboard']['explainerfile']} with explainerdashboard build"
+            f"humaine-explainerdashboard ===> first generate {config['dashboard']['explainerfile']} with humaine-explainerdashboard build"
         )
         return
 
     click.echo(
-        f"explainerdashboard ===> Building dashboard from {config['dashboard']['explainerfile']}"
+        f"humaine-explainerdashboard ===> Building dashboard from {config['dashboard']['explainerfile']}"
     )
 
     db = ExplainerDashboard.from_config(config)
@@ -176,16 +176,16 @@ def launch_dashboard_from_yaml(dashboard_config, no_browser, port, no_dashboard=
         if port is None:
             port = 8050
         click.echo(
-            f"explainerdashboard ===> Setting port to {port}, override with e.g. --port 8051"
+            f"humaine-explainerdashboard ===> Setting port to {port}, override with e.g. --port 8051"
         )
 
     if not no_browser and not os.environ.get("WERKZEUG_RUN_MAIN"):
         click.echo(
-            f"explainerdashboard ===> launching browser at {f'http://localhost:{port}/'}"
+            f"humaine-explainerdashboard ===> launching browser at {f'http://localhost:{port}/'}"
         )
         webbrowser.open_new(f"http://localhost:{port}/")
 
-    click.echo("explainerdashboard ===> Starting dashboard:")
+    click.echo("humaine-explainerdashboard ===> Starting dashboard:")
     if not no_dashboard:
         waitress.serve(db.flask_server(), host="0.0.0.0", port=port)
     return
@@ -244,21 +244,21 @@ def get_hub_filepath(filepath):
 @click.pass_context
 def explainerdashboard_cli(ctx):
     """
-    explainerdashboard CLI tool. Used to launch an explainerdashboard from
+    humaine-explainerdashboard CLI tool. Used to launch a humaine-explainerdashboard from
     the commandline.
 
     \b
-    explainerdashboard run
+    humaine-explainerdashboard run
     ----------------------
 
-    Run explainerdashboard and start browser directly from command line.
+    Run humaine-explainerdashboard and start browser directly from command line.
 
     \b
     Example use:
-        explainerdashboard run explainer.joblib
-        explainerdashboard run dashboard.yaml
-        explainerdashboard run dashboard.yaml --no-browser --port 8051
-        explainerdashboard run --help
+        humaine-explainerdashboard run explainer.joblib
+        humaine-explainerdashboard run dashboard.yaml
+        humaine-explainerdashboard run dashboard.yaml --no-browser --port 8051
+        humaine-explainerdashboard run --help
 
     If you pass an explainer.joblib file, will launch the full default dashboard.
     Generate this file with explainer.dump("explainer.joblib")
@@ -272,10 +272,10 @@ def explainerdashboard_cli(ctx):
     you can simply start with:
 
     \b
-        explainerdashboard run
+        humaine-explainerdashboard run
 
     \b
-    explainerdashboard build
+    humaine-explainerdashboard build
     ------------------------
 
     Build and store an explainer object, based on explainer.yaml file, that indicates
@@ -284,9 +284,9 @@ def explainerdashboard_cli(ctx):
 
     \b
     Example use:
-        explainerdashboard build explainer.yaml
-        explainerdashboard build explainer.yaml dashboard.yaml
-        explainerdashboard build --help
+        humaine-explainerdashboard build explainer.yaml
+        humaine-explainerdashboard build explainer.yaml dashboard.yaml
+        humaine-explainerdashboard build --help
 
     If given a second dashboard.yaml argument, will use that dashboard
     configuration to calculate necessary properties for that specific dashboard
@@ -300,7 +300,7 @@ def explainerdashboard_cli(ctx):
     naming convention you can simply start the build with:
 
     \b
-        explainerdashboard build
+        humaine-explainerdashboard build
 
     """
 
@@ -344,7 +344,7 @@ def run(ctx, explainer_filepath, no_browser, port):
         launch_dashboard_from_yaml(explainer_filepath, no_browser, port)
     else:
         click.echo(
-            "Please pass a proper argument to explainerdashboard run"
+            "Please pass a proper argument to humaine-explainerdashboard run"
             "(i.e. either an explainer.joblib or a dashboard.yaml)"
         )
     return
@@ -361,7 +361,7 @@ def build(ctx, explainer_filepath, dashboard_filepath):
             explainer_filepath = Path().cwd() / "explainer.yaml"
         else:
             click.echo(
-                "No argument given to explainerdashboard build and "
+                "No argument given to humaine-explainerdashboard build and "
                 "could not find an explainer.yaml. Aborting."
             )
             return
@@ -370,7 +370,7 @@ def build(ctx, explainer_filepath, dashboard_filepath):
         explainer_config = yaml.safe_load(open(str(explainer_filepath), "r"))
 
         click.echo(
-            f"explainerdashboard ===> Building {explainer_config['explainer']['explainerfile']}"
+            f"humaine-explainerdashboard ===> Building {explainer_config['explainer']['explainerfile']}"
         )
 
         if (
@@ -379,17 +379,17 @@ def build(ctx, explainer_filepath, dashboard_filepath):
             and Path(dashboard_filepath).exists()
         ):
             click.echo(
-                f"explainerdashboard ===> Using {dashboard_filepath} to calculate explainer properties"
+                f"humaine-explainerdashboard ===> Using {dashboard_filepath} to calculate explainer properties"
             )
             dashboard_config = yaml.safe_load(open(str(dashboard_filepath), "r"))
         else:
             dashboard_config = None
 
         print(
-            f"explainerdashboard ===> Building {explainer_config['explainer']['explainerfile']}"
+            f"humaine-explainerdashboard ===> Building {explainer_config['explainer']['explainerfile']}"
         )
         build_and_dump_explainer(explainer_config, dashboard_config)
-        print("explainerdashboard ===> Build finished!")
+        print("humaine-explainerdashboard ===> Build finished!")
         return
 
 
@@ -426,28 +426,28 @@ def test(ctx, explainer_filepath, port):
 @click.pass_context
 def explainerhub_cli(ctx):
     """
-    explainerhub CLI tool. Used to launch and manage explainerhub from
+    humaine-explainerhub CLI tool. Used to launch and manage humaine-explainerhub from
     the commandline.
 
     \b
-    explainerhub run
+    humaine-explainerhub run
     ----------------------
 
-    Run explainerdashboard and start browser directly from command line.
+    Run humaine-explainerdashboard and start browser directly from command line.
 
     \b
     Example use:
-        explainerhub run hub.yaml
+        humaine-explainerhub run hub.yaml
 
     \b
     If no argument given assumed argument is hub.yaml
 
     \b
-    explainerhub user management
+    humaine-explainerhub user management
     ----------------------------
 
     You can use the CLI to add and remove users from the users.json file that
-    stores the usernames and (hashed) passwords for the explainerhub. If no
+    stores the usernames and (hashed) passwords for the humaine-explainerhub. If no
     filename is given, will look for either a hub.yaml or users.json file.
 
     \b
@@ -455,19 +455,19 @@ def explainerhub_cli(ctx):
 
     \b
     Examples use:
-        explainerhub add-user
-        explainerhub add-user users.yaml
-        explainerhub add-user users2.json
-        explainerhub add-user hub.yaml
+        humaine-explainerhub add-user
+        humaine-explainerhub add-user users.yaml
+        humaine-explainerhub add-user users2.json
+        humaine-explainerhub add-user hub.yaml
 
-        explainerhub delete-user
-        explainerhub add-dashboard-user
-        explainerhub delete-dashboard-user
+        humaine-explainerhub delete-user
+        humaine-explainerhub add-dashboard-user
+        humaine-explainerhub delete-dashboard-user
 
     """
 
 
-@explainerhub_cli.command(help="run explainerhub and open browser")
+@explainerhub_cli.command(help="run humaine-explainerhub and open browser")
 @click.pass_context
 @click.argument("hub_filepath", nargs=1, required=False)
 @click.option(
@@ -506,7 +506,7 @@ def add_user(filepath, username, password):
         return
     ExplainerHub._validate_users_file(filepath)
     ExplainerHub._add_user_to_file(filepath, username=username, password=password)
-    click.echo(f"explainerhub ===> user added to {filepath}!")
+    click.echo(f"humaine-explainerhub ===> user added to {filepath}!")
 
 
 @explainerhub_cli.command(help="remove a user from users.yaml")
@@ -519,7 +519,7 @@ def delete_user(filepath, username):
 
     ExplainerHub._validate_users_file(filepath)
     ExplainerHub._delete_user_from_file(filepath, username=username)
-    click.echo(f"explainerhub ===> user removed from {filepath}!")
+    click.echo(f"humaine-explainerhub ===> user removed from {filepath}!")
 
 
 @explainerhub_cli.command(help="add a username to a dashboard users.yaml")
@@ -534,7 +534,7 @@ def add_dashboard_user(filepath, dashboard, username):
     ExplainerHub._add_user_to_dashboard_file(
         filepath, dashboard=dashboard, username=username
     )
-    click.echo(f"explainerhub ===> user added to {dashboard} in {filepath}!")
+    click.echo(f"humaine-explainerhub ===> user added to {dashboard} in {filepath}!")
 
 
 @explainerhub_cli.command(help="remove a username from a dashboard in users.yaml")
@@ -549,7 +549,7 @@ def delete_dashboard_user(filepath, dashboard, username):
     ExplainerHub._delete_user_from_dashboard_file(
         filepath, dashboard=dashboard, username=username
     )
-    click.echo(f"explainerhub ===> user removed from {dashboard} in {filepath}!")
+    click.echo(f"humaine-explainerhub ===> user removed from {dashboard} in {filepath}!")
 
 
 if __name__ == "__main__":

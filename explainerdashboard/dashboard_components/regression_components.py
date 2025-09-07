@@ -5,6 +5,7 @@ __all__ = [
     "ResidualsComponent",
     "RegressionVsColComponent",
     "RegressionModelSummaryComponent",
+    "ConformalizedQuantileRegressionComponent",
 ]
 
 import numpy as np
@@ -2110,3 +2111,245 @@ class RegressionVsColComponent(ExplainerComponent):
                     style,
                     style,
                 )
+
+
+class ConformalizedQuantileRegressionComponent(ExplainerComponent):
+    _state_props = dict(
+        coverage=("cqr-coverage-slider-", "value"),
+        feature=("cqr-feature-dropdown-", "value"),
+        n_samples=("cqr-n-samples-input-", "value"),
+    )
+
+    def __init__(
+        self,
+        explainer,
+        title="Conformalized Quantile Regression",
+        name=None,
+        subtitle="Model uncertainty quantification with prediction intervals",
+        hide_title=False,
+        hide_subtitle=False,
+        hide_coverage_slider=False,
+        hide_feature_selector=False,
+        hide_n_samples=False,
+        miscoverage_rate=0.1,
+        test_size=0.3,
+        slice_feature=None,
+        n_samples=500,
+        description=None,
+        **kwargs,
+    ):
+        """
+        Primary component for Split-CQR visualization and interaction.
+
+        Args:
+            explainer: RegressionExplainer instance
+            title (str): Component title
+            name (str): Unique component name
+            subtitle (str): Component subtitle  
+            hide_title (bool): Hide component title
+            hide_subtitle (bool): Hide component subtitle
+            hide_coverage_slider (bool): Hide coverage level control
+            hide_feature_selector (bool): Hide feature selection dropdown
+            hide_n_samples (bool): Hide sample size control
+            miscoverage_rate (float): Initial miscoverage rate (alpha)
+            test_size (float): Proportion of data for calibration
+            slice_feature (str): Initial feature for visualization
+            n_samples (int): Number of samples for plotting
+            description (str): Tooltip description
+        """
+        super().__init__(explainer, title, name)
+        
+        assert self.explainer.is_regression, (
+            "ConformalizedQuantileRegressionComponent can only be used with "
+            "RegressionExplainer!"
+        )
+        
+        self.subtitle = subtitle
+        self.hide_title = hide_title
+        self.hide_subtitle = hide_subtitle
+        self.hide_coverage_slider = hide_coverage_slider
+        self.hide_feature_selector = hide_feature_selector
+        self.hide_n_samples = hide_n_samples
+        
+        self.miscoverage_rate = miscoverage_rate
+        self.test_size = test_size
+        self.n_samples = n_samples
+        
+        # Set initial feature
+        if slice_feature is None:
+            self.slice_feature = self.explainer.columns_ranked_by_shap()[0]
+        else:
+            self.slice_feature = slice_feature
+            
+        if self.description is None:
+            self.description = """
+            Split-Conformalized Quantile Regression provides prediction intervals 
+            with guaranteed marginal coverage. The intervals are calibrated using 
+            a holdout set to ensure the empirical coverage meets or exceeds the 
+            nominal level. This allows for quantifying model uncertainty in a 
+            statistically rigorous way.
+            """
+
+    def layout(self):
+        return dbc.Card([
+            make_hideable(
+                dbc.CardHeader([
+                    html.Div([
+                        html.H3(self.title, id=f"cqr-title-{self.name}"),
+                        make_hideable(html.P(self.subtitle), self.hide_subtitle),
+                        dbc.Tooltip(self.description, target=f"cqr-title-{self.name}"),
+                    ])
+                ]), self.hide_title
+            ),
+            dbc.CardBody([
+                dbc.Row([
+                    make_hideable(
+                        dbc.Col([
+                            dbc.Label("Coverage Level:"),
+                            dcc.Slider(
+                                id=f"cqr-coverage-slider-{self.name}",
+                                min=0.8,
+                                max=0.99,
+                                step=0.01,
+                                value=1 - self.miscoverage_rate,
+                                marks={
+                                    0.8: "80%",
+                                    0.9: "90%",
+                                    0.95: "95%",
+                                    0.99: "99%"
+                                },
+                                tooltip={"placement": "bottom", "always_visible": True}
+                            )
+                        ], width=4), self.hide_coverage_slider
+                    ),
+                    make_hideable(
+                        dbc.Col([
+                            dbc.Label("Feature:"),
+                            dcc.Dropdown(
+                                id=f"cqr-feature-dropdown-{self.name}",
+                                options=[{"label": col, "value": col} 
+                                        for col in self.explainer.merged_cols],
+                                value=self.slice_feature,
+                            )
+                        ], width=4), self.hide_feature_selector
+                    ),
+                    make_hideable(
+                        dbc.Col([
+                            dbc.Label("Sample Size:"),
+                            dbc.Input(
+                                id=f"cqr-n-samples-input-{self.name}",
+                                type="number",
+                                value=self.n_samples,
+                                min=50,
+                                max=len(self.explainer.X),
+                                step=50
+                            )
+                        ], width=4), self.hide_n_samples
+                    ),
+                ], className="mb-3"),
+                dbc.Row([
+                    dbc.Col([
+                        dcc.Loading(
+                            dcc.Graph(id=f"cqr-intervals-plot-{self.name}"),
+                            type="default"
+                        )
+                    ], width=6),
+                    dbc.Col([
+                        dcc.Loading(
+                            dcc.Graph(id=f"cqr-width-plot-{self.name}"),
+                            type="default"
+                        )
+                    ], width=6),
+                ])
+            ])
+        ])
+
+    def component_callbacks(self, app):
+        @app.callback(
+            [Output(f"cqr-intervals-plot-{self.name}", "figure"),
+             Output(f"cqr-width-plot-{self.name}", "figure")],
+            [Input(f"cqr-coverage-slider-{self.name}", "value"),
+             Input(f"cqr-feature-dropdown-{self.name}", "value"),
+             Input(f"cqr-n-samples-input-{self.name}", "value")]
+        )
+        def update_cqr_plots(coverage, feature, n_samples):
+            return self._update_intervals_plot(coverage, feature, n_samples), \
+                   self._update_width_plot(coverage, feature, n_samples)
+
+    def _update_intervals_plot(self, coverage, feature, n_samples):
+        """Update the prediction intervals plot"""
+        try:
+            from ..explainer_plots import plotly_uncertainty_intervals
+            
+            miscoverage_rate = 1 - coverage
+            
+            # Calculate prediction intervals
+            intervals = self.explainer.calculate_prediction_intervals(
+                miscoverage_rate=miscoverage_rate
+            )
+            
+            # Get feature values
+            feature_values = self.explainer.get_col(feature).values
+            
+            return plotly_uncertainty_intervals(
+                y_true=self.explainer.y.values,
+                predictions=self.explainer.preds,
+                prediction_intervals=intervals,
+                feature_values=feature_values,
+                feature_name=feature,
+                target=self.explainer.target,
+                units=self.explainer.units,
+                idxs=self.explainer.idxs.values,
+                coverage=coverage,
+                round=3,
+                index_name=self.explainer.index_name,
+                plot_sample=n_samples
+            )
+        except Exception as e:
+            # Return empty figure on error
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error generating plot: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False
+            )
+            return fig
+
+    def _update_width_plot(self, coverage, feature, n_samples):
+        """Update the uncertainty width plot"""
+        try:
+            from ..explainer_plots import plotly_uncertainty_width
+            
+            miscoverage_rate = 1 - coverage
+            
+            # Calculate prediction intervals
+            intervals = self.explainer.calculate_prediction_intervals(
+                miscoverage_rate=miscoverage_rate
+            )
+            
+            # Get feature values
+            feature_values = self.explainer.get_col(feature).values
+            
+            return plotly_uncertainty_width(
+                prediction_intervals=intervals,
+                feature_values=feature_values,
+                feature_name=feature,
+                coverage=coverage,
+                round=3,
+                plot_sample=n_samples,
+                smooth=True
+            )
+        except Exception as e:
+            # Return empty figure on error
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error generating plot: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False
+            )
+            return fig
+
+
+
