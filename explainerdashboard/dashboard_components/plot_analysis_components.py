@@ -48,6 +48,7 @@ class PlotAnalysisComponent(ExplainerComponent):
         default_model="gpt-4o",
         max_tokens=512,
         description=None,
+        plot_kwargs=None,
         **kwargs,
     ):
         """Initialize PlotAnalysisComponent.
@@ -70,6 +71,7 @@ class PlotAnalysisComponent(ExplainerComponent):
             default_model (str, optional): Default LLM model. Defaults to "gpt-4o".
             max_tokens (int, optional): Maximum response tokens. Defaults to 512.
             description (str, optional): Tooltip description. Defaults to None.
+            plot_kwargs (dict, optional): Additional keyword arguments to pass to all plot methods. Defaults to None.
         """
         super().__init__(explainer, title, name)
         
@@ -82,6 +84,7 @@ class PlotAnalysisComponent(ExplainerComponent):
         self.max_file_size = max_file_size
         self.default_model = default_model
         self.max_tokens = max_tokens
+        self.plot_kwargs = plot_kwargs or {}
         
         if supported_formats is None:
             self.supported_formats = ["png", "jpg", "jpeg"]
@@ -104,45 +107,76 @@ class PlotAnalysisComponent(ExplainerComponent):
         self.available_plots = self._get_available_plots()
 
     def _get_available_plots(self):
-        """Get list of available plots based on explainer type."""
+        """Get list of available plots based on explainer type and available methods."""
         plots = {}
         
         # Common plots for both classifiers and regressors
-        plots["Feature Importance"] = [
-            "plot_importances (permutation)",
-            "plot_importances (shap)",
-        ]
+        plots["Feature Importance"] = []
+        if hasattr(self.explainer, 'plot_importances'):
+            plots["Feature Importance"].extend([
+                "plot_importances (permutation)",
+                "plot_importances (shap)",
+            ])
         
-        plots["SHAP"] = [
-            "plot_shap_summary (aggregate)",
-            "plot_shap_summary (detailed)", 
-            "plot_shap_dependence",
-            "plot_shap_interaction_summary",
-        ]
+        # SHAP plots
+        shap_plots = []
+        if hasattr(self.explainer, 'plot_importances'):
+            shap_plots.append("plot_shap_summary (aggregate)")
+        if hasattr(self.explainer, 'plot_importances_detailed'):
+            shap_plots.append("plot_shap_summary (detailed)")
+        if hasattr(self.explainer, 'plot_dependence'):
+            shap_plots.append("plot_shap_dependence")
+        # Only add interaction plots if interactions are supported
+        if (hasattr(self.explainer, 'plot_interactions_importance') and 
+            hasattr(self.explainer, 'interactions_should_work') and 
+            self.explainer.interactions_should_work):
+            shap_plots.append("plot_shap_interaction_summary")
         
+        if shap_plots:
+            plots["SHAP"] = shap_plots
+        
+        # Decision tree plots (only if available)
         if hasattr(self.explainer, 'decision_trees') and self.explainer.decision_trees:
-            plots["Decision Trees"] = [
-                "plot_decision_trees",
-                "plot_decision_path",
-            ]
+            tree_plots = []
+            if hasattr(self.explainer, 'plot_trees'):
+                tree_plots.append("plot_decision_trees")
+            if hasattr(self.explainer, 'plot_tree_path'):
+                tree_plots.append("plot_decision_path")
+            if tree_plots:
+                plots["Decision Trees"] = tree_plots
         
+        # Classifier-specific plots
         if self.explainer.is_classifier:
-            plots["Classification"] = [
-                "plot_confusion_matrix",
-                "plot_roc_auc",
-                "plot_pr_auc", 
-                "plot_precision",
-                "plot_cumulative_precision",
-                "plot_classification",
-                "plot_lift_curve",
-            ]
-        else:
-            plots["Regression"] = [
-                "plot_predicted_vs_actual",
-                "plot_residuals",
-                "plot_residuals_vs_feature",
-            ]
+            classifier_plots = []
+            for method, plot_name in [
+                ('plot_confusion_matrix', 'plot_confusion_matrix'),
+                ('plot_roc_auc', 'plot_roc_auc'),
+                ('plot_pr_auc', 'plot_pr_auc'),
+                ('plot_precision', 'plot_precision'),
+                ('plot_cumulative_precision', 'plot_cumulative_precision'),
+                ('plot_classification', 'plot_classification'),
+                ('plot_lift_curve', 'plot_lift_curve'),
+            ]:
+                if hasattr(self.explainer, method):
+                    classifier_plots.append(plot_name)
             
+            if classifier_plots:
+                plots["Classification"] = classifier_plots
+        
+        # Regression-specific plots
+        else:
+            regression_plots = []
+            for method, plot_name in [
+                ('plot_predicted_vs_actual', 'plot_predicted_vs_actual'),
+                ('plot_residuals', 'plot_residuals'),
+                ('plot_residuals_vs_feature', 'plot_residuals_vs_feature'),
+            ]:
+                if hasattr(self.explainer, method):
+                    regression_plots.append(plot_name)
+            
+            if regression_plots:
+                plots["Regression"] = regression_plots
+        
         return plots
     
     def _figure_to_bytes(self, fig):
@@ -491,26 +525,43 @@ Focus on actionable insights for model improvement and validation.
     def _capture_built_in_plot(self, plot_type, plot_name, **kwargs):
         """Capture a built-in plot from the explainer."""
         try:
-            # Map plot names to explainer methods
+            # Merge component-level plot_kwargs with method-specific kwargs
+            # Method-specific kwargs take precedence over component-level kwargs
+            merged_kwargs = {**self.plot_kwargs, **kwargs}
+            
+            # Filter out parameters that specific methods don't accept
+            def filter_kwargs_for_method(method_name, kwargs_dict):
+                """Filter kwargs based on method signature to avoid unexpected keyword argument errors."""
+                if method_name in ['plot_residuals', 'plot_predicted_vs_actual']:
+                    # These methods don't accept topx parameter
+                    return {k: v for k, v in kwargs_dict.items() if k != 'topx'}
+                elif method_name in ['plot_confusion_matrix', 'plot_roc_auc', 'plot_pr_auc', 
+                                   'plot_precision', 'plot_cumulative_precision', 'plot_classification', 'plot_lift_curve']:
+                    # Classification methods typically don't need topx
+                    return {k: v for k, v in kwargs_dict.items() if k != 'topx'}
+                else:
+                    return kwargs_dict
+            
+            # Map plot names to explainer methods with safe method calls and parameter filtering
             plot_method_map = {
-                "plot_importances (permutation)": lambda: self.explainer.plot_importances(kind="permutation", **kwargs),
-                "plot_importances (shap)": lambda: self.explainer.plot_importances(kind="shap", **kwargs),
-                "plot_shap_summary (aggregate)": lambda: self.explainer.plot_importances(kind="shap", **kwargs),
-                "plot_shap_summary (detailed)": lambda: self.explainer.plot_importances_detailed(**kwargs),
-                "plot_shap_dependence": lambda: self.explainer.plot_shap_dependence(col=kwargs.get('col', 0), **kwargs),
-                "plot_shap_interaction_summary": lambda: self.explainer.plot_shap_interaction_summary(**kwargs),
-                "plot_confusion_matrix": lambda: self.explainer.plot_confusion_matrix(**kwargs),
-                "plot_roc_auc": lambda: self.explainer.plot_roc_auc(**kwargs),
-                "plot_pr_auc": lambda: self.explainer.plot_pr_auc(**kwargs),
-                "plot_precision": lambda: self.explainer.plot_precision(**kwargs),
-                "plot_cumulative_precision": lambda: self.explainer.plot_cumulative_precision(**kwargs),
-                "plot_classification": lambda: self.explainer.plot_classification(**kwargs),
-                "plot_lift_curve": lambda: self.explainer.plot_lift_curve(**kwargs),
-                "plot_predicted_vs_actual": lambda: self.explainer.plot_predicted_vs_actual(**kwargs),
-                "plot_residuals": lambda: self.explainer.plot_residuals(**kwargs),
-                "plot_residuals_vs_feature": lambda: self.explainer.plot_residuals_vs_feature(col=kwargs.get('col', 0), **kwargs),
-                "plot_decision_trees": lambda: self.explainer.plot_trees(**kwargs),
-                "plot_decision_path": lambda: self.explainer.plot_tree_path(index=kwargs.get('index'), **kwargs),
+                "plot_importances (permutation)": lambda: self.explainer.plot_importances(kind="permutation", **filter_kwargs_for_method('plot_importances', merged_kwargs)) if hasattr(self.explainer, 'plot_importances') else None,
+                "plot_importances (shap)": lambda: self.explainer.plot_importances(kind="shap", **filter_kwargs_for_method('plot_importances', merged_kwargs)) if hasattr(self.explainer, 'plot_importances') else None,
+                "plot_shap_summary (aggregate)": lambda: self.explainer.plot_importances(kind="shap", **filter_kwargs_for_method('plot_importances', merged_kwargs)) if hasattr(self.explainer, 'plot_importances') else None,
+                "plot_shap_summary (detailed)": lambda: self.explainer.plot_importances_detailed(**filter_kwargs_for_method('plot_importances_detailed', merged_kwargs)) if hasattr(self.explainer, 'plot_importances_detailed') else None,
+                "plot_shap_dependence": lambda: self.explainer.plot_dependence(col=merged_kwargs.get('col', self.explainer.columns_ranked_by_shap()[0] if hasattr(self.explainer, 'columns_ranked_by_shap') else 0), **{k: v for k, v in filter_kwargs_for_method('plot_dependence', merged_kwargs).items() if k != 'col'}) if hasattr(self.explainer, 'plot_dependence') else None,
+                "plot_shap_interaction_summary": lambda: self.explainer.plot_interactions_importance(col=merged_kwargs.get('col', self.explainer.columns_ranked_by_shap()[0] if hasattr(self.explainer, 'columns_ranked_by_shap') else 0), **{k: v for k, v in filter_kwargs_for_method('plot_interactions_importance', merged_kwargs).items() if k != 'col'}) if hasattr(self.explainer, 'plot_interactions_importance') else None,
+                "plot_confusion_matrix": lambda: self.explainer.plot_confusion_matrix(**filter_kwargs_for_method('plot_confusion_matrix', merged_kwargs)) if hasattr(self.explainer, 'plot_confusion_matrix') else None,
+                "plot_roc_auc": lambda: self.explainer.plot_roc_auc(**filter_kwargs_for_method('plot_roc_auc', merged_kwargs)) if hasattr(self.explainer, 'plot_roc_auc') else None,
+                "plot_pr_auc": lambda: self.explainer.plot_pr_auc(**filter_kwargs_for_method('plot_pr_auc', merged_kwargs)) if hasattr(self.explainer, 'plot_pr_auc') else None,
+                "plot_precision": lambda: self.explainer.plot_precision(**filter_kwargs_for_method('plot_precision', merged_kwargs)) if hasattr(self.explainer, 'plot_precision') else None,
+                "plot_cumulative_precision": lambda: self.explainer.plot_cumulative_precision(**filter_kwargs_for_method('plot_cumulative_precision', merged_kwargs)) if hasattr(self.explainer, 'plot_cumulative_precision') else None,
+                "plot_classification": lambda: self.explainer.plot_classification(**filter_kwargs_for_method('plot_classification', merged_kwargs)) if hasattr(self.explainer, 'plot_classification') else None,
+                "plot_lift_curve": lambda: self.explainer.plot_lift_curve(**filter_kwargs_for_method('plot_lift_curve', merged_kwargs)) if hasattr(self.explainer, 'plot_lift_curve') else None,
+                "plot_predicted_vs_actual": lambda: self.explainer.plot_predicted_vs_actual(**filter_kwargs_for_method('plot_predicted_vs_actual', merged_kwargs)) if hasattr(self.explainer, 'plot_predicted_vs_actual') else None,
+                "plot_residuals": lambda: self.explainer.plot_residuals(**filter_kwargs_for_method('plot_residuals', merged_kwargs)) if hasattr(self.explainer, 'plot_residuals') else None,
+                "plot_residuals_vs_feature": lambda: self.explainer.plot_residuals_vs_feature(col=merged_kwargs.get('col', self.explainer.columns_ranked_by_shap()[0] if hasattr(self.explainer, 'columns_ranked_by_shap') else 0), **{k: v for k, v in filter_kwargs_for_method('plot_residuals_vs_feature', merged_kwargs).items() if k != 'col'}) if hasattr(self.explainer, 'plot_residuals_vs_feature') else None,
+                "plot_decision_trees": lambda: self.explainer.plot_trees(**filter_kwargs_for_method('plot_trees', merged_kwargs)) if hasattr(self.explainer, 'plot_trees') else None,
+                "plot_decision_path": lambda: self.explainer.plot_tree_path(index=merged_kwargs.get('index'), **{k: v for k, v in filter_kwargs_for_method('plot_tree_path', merged_kwargs).items() if k != 'index'}) if hasattr(self.explainer, 'plot_tree_path') else None,
             }
             
             if plot_name in plot_method_map:
