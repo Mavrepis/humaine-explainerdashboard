@@ -1,0 +1,28 @@
+FROM kubeflownotebookswg/jupyter-scipy:v1.9.2
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    graphviz \
+    build-essential \
+    libgomp1 \
+    libglib2.0-0 \
+    libnss3 \
+    libx11-xcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
+USER jovyan
+
+ENV PATH="/home/jovyan/.local/bin:${PATH}"
+
+WORKDIR /home/jovyan
+
+COPY pyproject.toml MANIFEST.in LICENSE.txt README.md ./
+
+COPY explainerdashboard/ ./explainerdashboard/
+
+COPY notebooks/ ./notebooks/
+
+RUN pip install --no-cache-dir --user '.[test]'
+
+RUN rm -rf ./pyproject.toml ./MANIFEST.in ./LICENSE.txt ./README.md ./explainerdashboard/
